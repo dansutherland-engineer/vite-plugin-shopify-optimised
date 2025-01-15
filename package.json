@@ -1,0 +1,47 @@
+{
+  "name": "vite-plugin-shopify",
+  "version": "3.1.1",
+  "description": "Vite plugin providing integration for Shopify themes",
+  "type": "module",
+  "repository": {
+    "url": "barrel/shopify-vite",
+    "directory": "packages/vite-plugin-shopify"
+  },
+  "keywords": [
+    "vite",
+    "shopify",
+    "vite-plugin"
+  ],
+  "author": "Barrel, LLC",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "dev": "npm run watch",
+    "build": "tsup src/index.ts --dts --format esm --clean --publicDir --shims",
+    "watch": "tsup src/index.ts --dts --format esm --watch --publicDir --shims",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "vite": "^5.0.0 || ^6.0.0"
+  },
+  "dependencies": {
+    "@shopify/cli-kit": "^3.67.2",
+    "@shopify/plugin-cloudflare": "^3.67.2",
+    "debug": "^4.3.4",
+    "fast-glob": "^3.2.11"
+  },
+  "devDependencies": {
+    "tsconfig": "workspace:*",
+    "vitest": "^0.25.7"
+  }
+}
