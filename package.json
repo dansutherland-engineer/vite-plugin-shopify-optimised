@@ -38,10 +38,12 @@
     "@shopify/cli-kit": "^3.67.2",
     "@shopify/plugin-cloudflare": "^3.67.2",
     "debug": "^4.3.4",
-    "fast-glob": "^3.2.11"
+    "fast-glob": "^3.2.11",
+    "tsconfig": "^7.0.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.3"
   },
   "devDependencies": {
-    "tsconfig": "workspace:*",
     "vitest": "^0.25.7"
   }
 }

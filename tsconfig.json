@@ -1,5 +1,5 @@
 {
-  "extends": "tsconfig/base.json",
+  "extends": "./tsconfig/base.json",
   "include": [
     "."
   ],
@@ -11,8 +11,12 @@
   "compilerOptions": {
     "baseUrl": "./",
     "paths": {
-      "@shopify/cli-kit/*": ["./node_modules/@shopify/cli-kit/dist/public/*"],
-      "@shopify/plugin-cloudflare/hooks/*": ["node_modules/@shopify/plugin-cloudflare/dist/*"]
+      "@shopify/cli-kit/*": [
+        "./node_modules/@shopify/cli-kit/dist/public/*"
+      ],
+      "@shopify/plugin-cloudflare/hooks/*": [
+        "node_modules/@shopify/plugin-cloudflare/dist/*"
+      ]
     }
   }
 }

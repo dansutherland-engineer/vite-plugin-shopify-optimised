@@ -13,7 +13,7 @@ import type { TunnelClient } from '@shopify/cli-kit/node/plugins/tunnel'
 const debug = createDebugger('vite-plugin-shopify:html')
 
 // Plugin for generating vite-tag liquid theme snippet with entry points for JS and CSS assets
-export default function shopifyHTML (options: Required<Options>): Plugin {
+export default function shopifyHTML(options: Required<Options>): Plugin {
   let config: ResolvedConfig
   let viteDevServerUrl: DevServerUrl
   let tunnelClient: TunnelClient | undefined
@@ -21,22 +21,24 @@ export default function shopifyHTML (options: Required<Options>): Plugin {
 
   const viteTagSnippetPath = path.resolve(options.themeRoot, `snippets/${options.snippetFile}`)
   const viteTagSnippetName = options.snippetFile.replace(/\.[^.]+$/, '')
+  // This prefix is prepended to BOTH dev and production snippets
   const viteTagSnippetPrefix = (config: ResolvedConfig): string =>
     viteTagDisclaimer + viteTagEntryPath(config.resolve.alias, options.entrypointsDir, viteTagSnippetName)
 
   return {
     name: 'vite-plugin-shopify-html',
     enforce: 'post',
-    configResolved (resolvedConfig) {
+    configResolved(resolvedConfig) {
       // Store reference to resolved config
       config = resolvedConfig
     },
-    transform (code) {
+    transform(code) {
       if (config.command === 'serve') {
+        // Replace placeholder with tunnel or dev server URL in dev mode
         return code.replace(/__shopify_vite_placeholder__/g, tunnelUrl ?? viteDevServerUrl)
       }
     },
-    configureServer ({ config, middlewares, httpServer }) {
+    configureServer({ config, middlewares, httpServer }) {
       const tunnelConfig = resolveTunnelConfig(options)
 
       if (tunnelConfig.frontendPort !== -1) {
@@ -45,8 +47,8 @@ export default function shopifyHTML (options: Required<Options>): Plugin {
 
       httpServer?.once('listening', () => {
         const address = httpServer?.address()
-
-        const isAddressInfo = (x: string | AddressInfo | null | undefined): x is AddressInfo => typeof x === 'object'
+        const isAddressInfo = (x: string | AddressInfo | null | undefined): x is AddressInfo =>
+          typeof x === 'object'
 
         if (isAddressInfo(address)) {
           viteDevServerUrl = resolveDevServerUrl(address, config)
@@ -56,6 +58,7 @@ export default function shopifyHTML (options: Required<Options>): Plugin {
 
           debug({ address, viteDevServerUrl, tunnelConfig })
 
+          // If using a tunnel, attempt to start it
           setTimeout(() => {
             void (async (): Promise<void> => {
               if (options.tunnel === false) {
@@ -63,11 +66,13 @@ export default function shopifyHTML (options: Required<Options>): Plugin {
               }
 
               if (tunnelConfig.frontendUrl !== '') {
+                // If a direct URL is provided, use that
                 tunnelUrl = tunnelConfig.frontendUrl
                 isTTY() && renderInfo({ body: `${viteDevServerUrl} is tunneled to ${tunnelUrl}` })
                 return
               }
 
+              // Otherwise, start a Cloudflare tunnel automatically
               const hook = await startTunnel({
                 config: null,
                 provider: 'cloudflare',
@@ -76,23 +81,26 @@ export default function shopifyHTML (options: Required<Options>): Plugin {
               tunnelClient = hook.valueOrAbort()
               tunnelUrl = await pollTunnelUrl(tunnelClient)
               isTTY() && renderInfo({ body: `${viteDevServerUrl} is tunneled to ${tunnelUrl}` })
-              const viteTagSnippetContent = viteTagSnippetPrefix(config) + viteTagSnippetDev(
-                tunnelUrl, options.entrypointsDir, reactPlugin
-              )
 
-              // Write vite-tag with a Cloudflare Tunnel URL
+              // Write the dev snippet with the newly discovered tunnel URL
+              const viteTagSnippetContent = viteTagSnippetPrefix(config) +
+                viteTagSnippetDev(tunnelUrl, options.entrypointsDir, reactPlugin)
+
               fs.writeFileSync(viteTagSnippetPath, viteTagSnippetContent)
             })()
           }, 100)
 
-          const viteTagSnippetContent = viteTagSnippetPrefix(config) + viteTagSnippetDev(
-            tunnelConfig.frontendUrl !== ''
-              ? tunnelConfig.frontendUrl
-              : viteDevServerUrl, options.entrypointsDir, reactPlugin
-          )
+          // Write the dev snippet with either the provided URL or local dev server
+          const devSnippetContent = viteTagSnippetPrefix(config) +
+            viteTagSnippetDev(
+              tunnelConfig.frontendUrl !== ''
+                ? tunnelConfig.frontendUrl
+                : viteDevServerUrl,
+              options.entrypointsDir,
+              reactPlugin
+            )
 
-          // Write vite-tag snippet for development server
-          fs.writeFileSync(viteTagSnippetPath, viteTagSnippetContent)
+          fs.writeFileSync(viteTagSnippetPath, devSnippetContent)
         }
       })
 
@@ -104,16 +112,15 @@ export default function shopifyHTML (options: Required<Options>): Plugin {
       return () => middlewares.use((req, res, next) => {
         if (req.url === '/index.html') {
           res.statusCode = 404
-
           res.end(
             fs.readFileSync(path.join(__dirname, 'dev-server-index.html')).toString()
           )
         }
-
         next()
       })
     },
-    closeBundle () {
+    closeBundle() {
+      // Only run this logic in production (build) mode
       if (config.command === 'serve') {
         return
       }
@@ -128,10 +135,11 @@ export default function shopifyHTML (options: Required<Options>): Plugin {
         return
       }
 
-      const assetTags: string[] = []
       const manifest = JSON.parse(
         fs.readFileSync(manifestFilePath, 'utf8')
       ) as Manifest
+
+      const assetTags: string[] = []
 
       Object.keys(manifest).forEach((src) => {
         const { file, isEntry, css, imports } = manifest[src]
@@ -143,58 +151,66 @@ export default function shopifyHTML (options: Required<Options>): Plugin {
           const entryPaths = [`/${src}`, entryName]
           const tagsForEntry = []
 
-          if (ext.match(CSS_EXTENSIONS_REGEX) !== null) {
-            // Render style tag for CSS entry
+          if (ext.match(CSS_EXTENSIONS_REGEX)) {
+            // This is a CSS entry
             tagsForEntry.push(stylesheetTag(file, options.versionNumbers))
           } else {
-            // Render script tag for JS entry
+            // This is a JS entry => generate script tag
             tagsForEntry.push(scriptTag(file, options.versionNumbers))
 
+            // Also handle imports (e.g. dynamically imported chunks)
             if (typeof imports !== 'undefined' && imports.length > 0) {
               imports.forEach((importFilename: string) => {
                 const chunk = manifest[importFilename]
                 const { css } = chunk
-                // Render preload tags for JS imports
+                // Preload the JS chunk
                 tagsForEntry.push(preloadScriptTag(chunk.file, options.versionNumbers))
-
-                // Render style tag for JS imports
-                if (typeof css !== 'undefined' && css.length > 0) {
+                // Any CSS imported by that chunk
+                if (css && css.length > 0) {
                   css.forEach((cssFileName: string) => {
-                    // Render style tag for imported CSS file
                     tagsForEntry.push(stylesheetTag(cssFileName, options.versionNumbers))
                   })
                 }
               })
             }
 
-            if (typeof css !== 'undefined' && css.length > 0) {
+            // If our main entry also has some direct CSS references
+            if (css && css.length > 0) {
               css.forEach((cssFileName: string) => {
-                // Render style tag for imported CSS file
                 tagsForEntry.push(stylesheetTag(cssFileName, options.versionNumbers))
               })
             }
           }
 
+          // Combine tags for this entry
           assetTags.push(viteEntryTag(entryPaths, tagsForEntry.join('\n  '), assetTags.length === 0))
         }
 
-        // Generate entry tag for bundled "style.css" file when cssCodeSplit is false
+        // If using a single .css file with cssCodeSplit off
         if (src === 'style.css' && !config.build.cssCodeSplit) {
-          assetTags.push(viteEntryTag([src], stylesheetTag(file, options.versionNumbers), false))
+          assetTags.push(
+            viteEntryTag([src], stylesheetTag(file, options.versionNumbers), false)
+          )
         }
       })
 
-      const viteTagSnippetContent = viteTagSnippetPrefix(config) + assetTags.join('\n') + '\n{% endif %}\n'
+      // Build final snippet content for production
+      const viteTagSnippetContent =
+        viteTagSnippetPrefix(config) + assetTags.join('\n') + '\n{% endif %}\n'
 
-      // Write vite-tag snippet for production build
       fs.writeFileSync(viteTagSnippetPath, viteTagSnippetContent)
     }
   }
 }
 
-const viteTagDisclaimer = '{% comment %}\n  IMPORTANT: This snippet is automatically generated by vite-plugin-shopify.\n  Do not attempt to modify this file directly, as any changes will be overwritten by the next build.\n{% endcomment %}\n'
+const viteTagDisclaimer = `{% comment %}
+  IMPORTANT: This snippet is automatically generated by vite-plugin-shopify.
+  Do not attempt to modify this file directly, as any changes will be overwritten by the next build.
+{% endcomment %}\n`
 
-// Generate liquid variable with resolved path by replacing aliases
+// ---------------------------------------------------------
+//   1) Let Liquid know the "path" + set default script_defer
+// ---------------------------------------------------------
 const viteTagEntryPath = (
   resolveAlias: Array<{ find: string | RegExp, replacement: string }>,
   entrypointsDir: string,
@@ -204,39 +220,78 @@ const viteTagEntryPath = (
 
   resolveAlias.forEach((alias) => {
     if (typeof alias.find === 'string') {
-      replacements.push([alias.find, normalizePath(path.relative(entrypointsDir, alias.replacement))])
+      replacements.push([
+        alias.find,
+        normalizePath(path.relative(entrypointsDir, alias.replacement))
+      ])
     }
   })
 
-  return `{% assign path = ${snippetName} | ${replacements.map(([from, to]) => `replace: '${from}/', '${to}/'`).join(' | ')} %}\n`
+  // We add a line to default script_defer to false in production
+  return `{% assign path = ${snippetName} | ${replacements
+    .map(([from, to]) => `replace: '${from}/', '${to}/'`)
+    .join(' | ')} %}
+{% assign script_defer = script_defer | default: false %}
+`
 }
 
-// Generate the asset's url with or without version numbers
+// ---------------------------------------------------------
+//   2) Format final asset URLs (with or without versioning)
+// ---------------------------------------------------------
 const assetUrl = (fileName: string, versionNumbers: boolean): string => {
   if (!versionNumbers) {
+    // remove query param for versionless
     return `'${fileName}' | asset_url | split: '?' | first`
   }
   return `'${fileName}' | asset_url`
 }
 
-// Generate conditional statement for entry tag
+// ---------------------------------------------------------
+//   3) Liquid condition for picking the right entry block
+// ---------------------------------------------------------
 const viteEntryTag = (entryPaths: string[], tag: string, isFirstEntry = false): string =>
-  `{% ${!isFirstEntry ? 'els' : ''}if ${entryPaths.map((entryName) => `path == "${entryName}"`).join(' or ')} %}\n  ${tag}`
+  `{% ${!isFirstEntry ? 'els' : ''}if ${entryPaths
+    .map((entryName) => `path == "${entryName}"`)
+    .join(' or ')} %}
+  ${tag}`
 
-// Generate a preload link tag for a script or style asset
+// ---------------------------------------------------------
+//   4) Preload link for a JS chunk in production
+// ---------------------------------------------------------
 const preloadScriptTag = (fileName: string, versionNumbers: boolean): string =>
   `<link rel="modulepreload" href="{{ ${assetUrl(fileName, versionNumbers)} }}" crossorigin="anonymous">`
 
-// Generate a production script tag for a script asset
-const scriptTag = (fileName: string, versionNumbers: boolean): string =>
-  `<script src="{{ ${assetUrl(fileName, versionNumbers)} }}" type="module" crossorigin="anonymous"></script>`
+// ---------------------------------------------------------
+//   5) Production script tag (with Liquid defer logic)
+// ---------------------------------------------------------
+function scriptTag(
+  fileName: string,
+  versionNumbers: boolean
+): string {
+  // This snippet uses Liquid to conditionally add `defer` if script_defer is true
+  return `
+{% if script_defer == false %}
+<script src="{{ ${assetUrl(fileName, versionNumbers)} }}" type="module" crossorigin="anonymous"></script>
+{% else %}
+<script src="{{ ${assetUrl(fileName, versionNumbers)} }}" type="module" crossorigin="anonymous" defer></script>
+{% endif %}
+`.trim()
+}
 
-// Generate a production stylesheet link tag for a style asset
+// ---------------------------------------------------------
+//   6) Production stylesheet link tag for a CSS asset
+// ---------------------------------------------------------
 const stylesheetTag = (fileName: string, versionNumbers: boolean): string =>
   `{{ ${assetUrl(fileName, versionNumbers)} | stylesheet_tag: preload: preload_stylesheet }}`
 
-// Generate vite-tag snippet for development
-const viteTagSnippetDev = (assetHost: string, entrypointsDir: string, reactPlugin: Plugin | undefined): string =>
+// ---------------------------------------------------------
+//   7) Dev snippet (no "defer" logic here; dev is simpler)
+// ---------------------------------------------------------
+const viteTagSnippetDev = (
+  assetHost: string,
+  entrypointsDir: string,
+  reactPlugin: Plugin | undefined
+): string =>
   `{% liquid
   assign path_prefix = path | slice: 0
   if path_prefix == '/'
@@ -269,9 +324,13 @@ const viteTagSnippetDev = (assetHost: string, entrypointsDir: string, reactPlugi
 /**
  * Resolve the dev server URL from the server address and configuration.
  */
-function resolveDevServerUrl (address: AddressInfo, config: ResolvedConfig): DevServerUrl {
+function resolveDevServerUrl(address: AddressInfo, config: ResolvedConfig): DevServerUrl {
   const configHmrProtocol = typeof config.server.hmr === 'object' ? config.server.hmr.protocol : null
-  const clientProtocol = configHmrProtocol ? (configHmrProtocol === 'wss' ? 'https' : 'http') : null
+  const clientProtocol = configHmrProtocol
+    ? configHmrProtocol === 'wss'
+      ? 'https'
+      : 'http'
+    : null
   const serverProtocol = config.server.https ? 'https' : 'http'
   const protocol = clientProtocol ?? serverProtocol
 
@@ -286,16 +345,18 @@ function resolveDevServerUrl (address: AddressInfo, config: ResolvedConfig): Dev
   return `${protocol}://${host}:${port}`
 }
 
-function isIpv6 (address: AddressInfo): boolean {
-  return address.family === 'IPv6' ||
-    // In node >=18.0 <18.4 this was an integer value. This was changed in a minor version.
+function isIpv6(address: AddressInfo): boolean {
+  return (
+    address.family === 'IPv6' ||
+    // In node >=18.0 <18.4 this was an integer value.
     // See: https://github.com/laravel/vite-plugin/issues/103
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error-next-line
     address.family === 6
+  )
 }
 
-function resolveTunnelConfig (options: Required<Options>): FrontendURLResult {
+function resolveTunnelConfig(options: Required<Options>): FrontendURLResult {
   let frontendPort = -1
   let frontendUrl = ''
   let usingLocalhost = false
@@ -319,16 +380,16 @@ function resolveTunnelConfig (options: Required<Options>): FrontendURLResult {
 }
 
 /**
- * Poll the tunnel provider every 0.5 until an URL or error is returned.
+ * Poll the tunnel provider every 0.5s until an URL or error is returned.
  */
-async function pollTunnelUrl (tunnelClient: TunnelClient): Promise<string> {
+async function pollTunnelUrl(tunnelClient: TunnelClient): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     let retries = 0
     const pollTunnelStatus = async (): Promise<void> => {
       const result = tunnelClient.getTunnelStatus()
       debug(`Polling tunnel status for ${tunnelClient.provider} (attempt ${retries}): ${result.status}`)
       if (result.status === 'error') {
-        return reject(result.message) // Changed AbortError to standard Error
+        return reject(result.message)
       }
       if (result.status === 'connected') {
         resolve(result.url)
