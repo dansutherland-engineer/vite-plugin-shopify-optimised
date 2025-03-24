@@ -270,7 +270,7 @@ var viteTagEntryPath = (resolveAlias, entrypointsDir, snippetName) => {
     }
   });
   return `{% assign path = ${snippetName} | ${replacements.map(([from, to]) => `replace: '${from}/', '${to}/'`).join(" | ")} %}
-{% assign script_defer = script_defer | default: true %}
+{% assign script_defer = script_defer | default: true, allow_false: true %}
 `;
 };
 var assetUrl = (fileName, versionNumbers) => {
